@@ -1,22 +1,20 @@
 import os
 import time
-import chromadb
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors
-from sentence_transformers import SentenceTransformer
+from retrieval import retrieve
 
 load_dotenv()
 llm = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+from groq import Groq
+groq_client = Groq(api_key=os.environ["GROQ_API_KEY"]) if os.getenv("GROQ_API_KEY") else None
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # Tries models in order; edit this list using names shown in Google AI Studio
 MODELS = [m.strip() for m in os.getenv(
     "GEMINI_MODELS", "gemini-3.8-flash"
 ).split(",")]
-
-embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
-col = chromadb.PersistentClient(path="data/chroma").get_collection("papers")
-PREFIX = "Represent this sentence for searching relevant passages: "
 
 
 def generate(prompt, retries=3):
@@ -24,22 +22,22 @@ def generate(prompt, retries=3):
     for model in MODELS:
         for attempt in range(retries):
             try:
-                return llm.models.generate_content(model=model, contents=prompt)
+                return llm.models.generate_content(model=model, contents=prompt).text
             except (errors.ServerError, errors.ClientError) as e:
                 last_err = e
-                code = getattr(e, "code", None)
-                if code in (429, 500, 503):
-                    time.sleep(2 ** attempt)   # wait 1, 2, 4 s then retry
+                if getattr(e, "code", None) in (429, 500, 503):
+                    time.sleep(2 ** attempt)
                     continue
-                break                           # e.g. 404 bad model name: try next model
+                break  # bad model name etc.: try the next model
+
+    # Reached only after every Gemini model has failed
+    if groq_client:
+        r = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return r.choices[0].message.content
     raise RuntimeError(f"All models failed: {last_err}")
-
-
-def retrieve(question, k=5):
-    emb = embedder.encode(PREFIX + question, normalize_embeddings=True).tolist()
-    res = col.query(query_embeddings=[emb], n_results=k)
-    return list(zip(res["documents"][0], res["metadatas"][0]))
-
 
 def answer(question):
     hits = retrieve(question)
@@ -52,8 +50,8 @@ def answer(question):
         "If the sources don't contain the answer, say you don't know.\n\n"
         f"SOURCES:\n{context}\n\nQUESTION: {question}"
     )
-    resp = generate(prompt)
-    return resp.text, hits
+    text = generate(prompt)
+    return text, hits
 
 
 if __name__ == "__main__":
