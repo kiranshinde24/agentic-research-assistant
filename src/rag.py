@@ -11,7 +11,7 @@ llm = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 # Tries models in order; edit this list using names shown in Google AI Studio
 MODELS = [m.strip() for m in os.getenv(
-    "GEMINI_MODELS", "gemini-3.8-flash,gemini-2.5-flash-lite,gemini-2.0-flash"
+    "GEMINI_MODELS", "gemini-3.8-flash"
 ).split(",")]
 
 embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
